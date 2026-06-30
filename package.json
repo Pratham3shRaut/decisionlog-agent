@@ -1,0 +1,16 @@
+{
+  "name": "decisionlog-agent",
+  "version": "1.0.0",
+  "description": "DecisionLog — a Slack agent that detects decisions in conversation and documents them automatically.",
+  "type": "module",
+  "main": "app.js",
+  "scripts": {
+    "dev": "node --watch app.js",
+    "start": "node app.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@slack/bolt": "^3.21.4",
+    "dotenv": "^16.4.5"
+  }
+}
