@@ -45,8 +45,9 @@ Search agent  ◀──  Decision store  ◀──  Approval card  ◀───�
 
 | Layer | Technology |
 |---|---|
-| Agent framework | Slack Bolt |
-| Detection | Claude (Anthropic API) |
+| API Framework | FastAPI (Python) |
+| Agent framework | Slack Bolt for Python |
+| Detection | Google Gemini (Gemini API) |
 | Context enrichment | Slack MCP server + Real-Time Search API |
 | Storage | Postgres + Slack canvas |
 | Search | Embeddings + LLM |
@@ -59,18 +60,22 @@ Uses all three eligible Slack technologies: **Slack AI capabilities**, **MCP ser
 
 ### Prerequisites
 
-- Node.js 18+
+- Python 3.10+
 - A Slack developer sandbox workspace
-- An Anthropic API key
+- A Google Gemini API key
 
 ### Setup
 
 ```bash
 git clone https://github.com/<your-team>/decisionlog.git
 cd decisionlog
-npm install
+python -m venv venv
+# On Windows: venv\Scripts\activate
+# On macOS/Linux: source venv/bin/activate
+source venv/bin/activate
+pip install -r requirements.txt
 cp .env.example .env   # fill in your tokens
-npm run dev
+uvicorn main:app --reload
 ```
 
 ### Environment variables
@@ -79,7 +84,7 @@ npm run dev
 SLACK_BOT_TOKEN=xoxb-...
 SLACK_SIGNING_SECRET=...
 SLACK_APP_TOKEN=xapp-...
-ANTHROPIC_API_KEY=sk-ant-...
+GEMINI_API_KEY=AIzaSy...
 DATABASE_URL=postgres://...
 ```
 
