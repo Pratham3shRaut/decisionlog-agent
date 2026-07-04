@@ -13,7 +13,7 @@ load_dotenv()
 api_key = os.environ.get("GEMINI_API_KEY")
 client = genai.Client(api_key=api_key)
 
-def generate_content_with_retry(model: str, contents: str, config: types.GenerateContentConfig, max_retries: int = 3, initial_delay: float = 1.0):
+def generate_content_with_retry(model: str, contents: str, config: types.GenerateContentConfig, max_retries: int = 3, initial_delay: float = 15.0):
     """
     Wrapper around client.models.generate_content that catches rate limit errors (429)
     and automatically retries with exponential backoff.
@@ -27,15 +27,23 @@ def generate_content_with_retry(model: str, contents: str, config: types.Generat
                 config=config
             )
         except Exception as e:
-            err_str = str(e)
-            is_rate_limit = any(term in err_str for term in ("429", "ResourceExhausted", "Too Many Requests", "Quota exceeded"))
+            # The google-genai SDK wraps its own internal retries in tenacity.RetryError,
+            # which hides the real ClientError (and its 429 message) inside .last_attempt.
+            underlying = e
+            if hasattr(e, "last_attempt"):
+                try:
+                    underlying = e.last_attempt.exception() or e
+                except Exception:
+                    underlying = e
+            err_str = str(underlying)
+            is_rate_limit = any(term in err_str for term in ("429", "ResourceExhausted", "Too Many Requests", "Quota exceeded", "RESOURCE_EXHAUSTED"))
             if is_rate_limit and attempt < max_retries:
                 print(f"Gemini API rate limited (429). Retrying in {delay:.1f}s (Attempt {attempt + 1}/{max_retries})...")
                 time.sleep(delay)
                 delay *= 2  # Exponential backoff
             else:
-                # Re-raise the exception if not a rate limit or exhausted retries
-                raise e
+                # Re-raise the underlying exception so callers see the real error, not tenacity's RetryError
+                raise underlying
 
 # Pydantic schema for structured decision detection
 class DecisionAnalysis(BaseModel):
@@ -66,9 +74,21 @@ def detect_decision(
     """
     sender_info = f"Message Sender: {sender_name}\n" if sender_name else ""
     date_info = f"Current Date: {current_date}\n" if current_date else ""
+    rules = """
+    Rules:
+    - Only mark is_decision=True if the team has actually settled on a course of action.
+    - Questions, requests for opinions, and status checks ("should we...?", "what do you think?", "has anyone looked at...?") are NOT decisions.
+    - Brainstorming and proposals without agreement ("maybe we could try...", "just an idea") are NOT decisions.
+    - Sarcastic or joking messages are NOT decisions, even if phrased like one.
+    - Noncommittal or hedging responses ("yeah maybe", "leaning towards", "not sure yet") are NOT decisions.
+    - A short agreement like "agreed", "+1", "sounds good", or "let's do that" IS a decision, but only if the
+      Recent Conversation Context makes clear what specific proposal is being agreed to. If there is no context
+      and the message alone is ambiguous, mark is_decision=False.
+    - Generic acknowledgements with no decision content ("lgtm", "ok", "thanks") are NOT decisions.
+    """
     prompt = f"""
     Analyze the following Slack message to determine if a team decision, resolution, or finalized plan of action has occurred.
-    
+    {rules}
     {sender_info}{date_info}Current Message:
     "{text}"
     """
@@ -76,7 +96,7 @@ def detect_decision(
         prompt = f"""
         Recent Conversation Context:
         {context}
-        
+        {rules}
         {sender_info}{date_info}Current Message:
         "{text}"
         """
@@ -94,6 +114,45 @@ def detect_decision(
     # The response text will be a JSON string conforming to DecisionAnalysis
     data = json.loads(response.text)
     return DecisionAnalysis(**data)
+
+EMBEDDING_MODEL = "gemini-embedding-001"
+
+
+def embed_text(text: str) -> Optional[List[float]]:
+    """
+    Return a semantic embedding vector for the given text, or None on failure.
+    Used to store one embedding per logged decision and to embed incoming
+    questions for semantic (meaning-based) search in the Q&A path.
+    """
+    if not text or not text.strip():
+        return None
+    try:
+        response = client.models.embed_content(model=EMBEDDING_MODEL, contents=text)
+        return list(response.embeddings[0].values)
+    except Exception as e:
+        # Unwrap tenacity RetryError to log the real cause, but never let embedding
+        # failure break decision logging — semantic search simply degrades.
+        underlying = e
+        if hasattr(e, "last_attempt"):
+            try:
+                underlying = e.last_attempt.exception() or e
+            except Exception:
+                underlying = e
+        print(f"Embedding failed (semantic search will be degraded): {underlying}")
+        return None
+
+
+def cosine_similarity(a: List[float], b: List[float]) -> float:
+    """Cosine similarity between two equal-length vectors. Returns 0.0 if either is empty/mismatched."""
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = sum(x * x for x in a) ** 0.5
+    norm_b = sum(y * y for y in b) ** 0.5
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
 
 def answer_query(query: str, logs: List[dict], current_date: Optional[str] = None) -> str:
     """

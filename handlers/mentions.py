@@ -1,9 +1,10 @@
 import re
+import json
 import asyncio
 import logging
 from slack_bolt.async_app import AsyncApp
 from db import SessionLocal, LoggedDecision
-from gemini import answer_query
+from gemini import answer_query, embed_text, cosine_similarity
 
 logger = logging.getLogger("decisionlog.mentions")
 
@@ -27,30 +28,55 @@ async def process_mention_async(event, say, client):
                 logger.error(f"Error replying to empty app mention: {e}")
             return
 
-        # Fetch recent logged decisions for context from this channel
+        # Embed the question so we can rank decisions by semantic meaning, not just recency.
+        query_vector = embed_text(query)
+
+        # Fetch logged decisions and rank them by semantic similarity to the question.
         db = SessionLocal()
         try:
-            # Fetch up to 50 recent decisions for this channel to build context
+            # Prefer decisions from this channel; fall back to all channels if none here.
             decisions = (
                 db.query(LoggedDecision)
                 .filter(LoggedDecision.channel_id == channel_id)
                 .order_by(LoggedDecision.created_at.desc())
-                .limit(50)
                 .all()
             )
-            
-            # If no decisions in this channel, maybe check globally
             if not decisions:
                 decisions = (
                     db.query(LoggedDecision)
                     .order_by(LoggedDecision.created_at.desc())
-                    .limit(50)
                     .all()
                 )
-                
+
+            if query_vector:
+                # Semantic ranking: score every decision that has a stored embedding by
+                # cosine similarity to the question, then keep the top matches.
+                scored = []
+                for d in decisions:
+                    if not d.embedding:
+                        continue
+                    try:
+                        d_vector = json.loads(d.embedding)
+                    except Exception:
+                        continue
+                    score = cosine_similarity(query_vector, d_vector)
+                    scored.append((score, d))
+                scored.sort(key=lambda x: x[0], reverse=True)
+                ranked = [d for _score, d in scored[:8]]
+                # If nothing had an embedding (e.g. all old rows), fall back to recency.
+                if not ranked:
+                    ranked = decisions[:8]
+                    logger.info("No embeddings available; falling back to recency-based context.")
+                else:
+                    logger.info(f"Ranked {len(scored)} decisions semantically; using top {len(ranked)}.")
+            else:
+                # Embedding the query failed; fall back to recency.
+                ranked = decisions[:8]
+                logger.info("Query embedding unavailable; falling back to recency-based context.")
+
             # Serialize for Gemini
             logs = []
-            for d in decisions:
+            for d in ranked:
                 logs.append({
                     "summary": d.summary,
                     "rationale": d.rationale,

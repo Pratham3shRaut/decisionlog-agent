@@ -2,6 +2,7 @@ import json
 import logging
 from slack_bolt.async_app import AsyncApp
 from db import SessionLocal, LoggedDecision
+from gemini import embed_text
 
 logger = logging.getLogger("decisionlog.actions")
 
@@ -33,12 +34,24 @@ def register_action_handlers(app: AsyncApp):
             db = SessionLocal()
             try:
                 logger.info("Connecting to DB and committing decision record...")
+                # Generate a semantic embedding of the decision so it can be found later
+                # by meaning (not just recency) in the Q&A path. Store as JSON text.
+                embedding_json = None
+                try:
+                    vector = embed_text(f"{summary}\n{rationale or ''}")
+                    if vector:
+                        embedding_json = json.dumps(vector)
+                        logger.info(f"Generated embedding ({len(vector)} dims) for decision.")
+                except Exception as emb_err:
+                    logger.warning(f"Could not generate embedding (semantic search degraded): {emb_err}")
+
                 new_decision = LoggedDecision(
                     channel_id=channel_id,
                     thread_ts=thread_ts,
                     summary=summary,
                     rationale=rationale,
-                    decision_maker=decision_maker
+                    decision_maker=decision_maker,
+                    embedding=embedding_json
                 )
                 db.add(new_decision)
                 db.commit()

@@ -3,6 +3,7 @@ import logging
 import asyncio
 from slack_bolt.async_app import AsyncApp
 from gemini import detect_decision
+from mcp_client import search_related_discussions
 
 logger = logging.getLogger("decisionlog.messages")
 
@@ -34,10 +35,36 @@ async def process_message_async(event, say, client):
             current_date_str = datetime.now().strftime("%A, %B %d, %Y")
             
         logger.info(f"Processing message from user '{sender_name}' ({user}) in channel '{channel}' at '{current_date_str}': '{text}'")
-        
+
+        # Fetch recent preceding messages in the same channel/thread to give the detector conversational context.
+        # Without this, multi-message decisions (proposal in one message, agreement in another) are invisible.
+        context_str = None
+        try:
+            if event.get("thread_ts"):
+                history = await client.conversations_replies(channel=channel, ts=thread_ts, limit=10)
+            else:
+                history = await client.conversations_history(channel=channel, latest=ts, limit=6, inclusive=False)
+            history_messages = history.get("messages", [])
+            # conversations_history returns newest-first; conversations_replies returns oldest-first
+            if not event.get("thread_ts"):
+                history_messages = list(reversed(history_messages))
+            context_lines = []
+            for m in history_messages:
+                if m.get("ts") == ts:
+                    continue
+                m_text = m.get("text")
+                if not m_text:
+                    continue
+                context_lines.append(f"<@{m.get('user', 'unknown')}>: {m_text}")
+            if context_lines:
+                context_str = "\n".join(context_lines[-6:])
+                logger.info(f"Built conversation context ({len(context_lines)} messages) for decision detection.")
+        except Exception as ctx_err:
+            logger.warning(f"Could not fetch conversation context: {ctx_err}")
+
         # Detect decision
         logger.info("Calling Gemini for decision detection...")
-        analysis = detect_decision(text, sender_name=sender_name, current_date=current_date_str)
+        analysis = detect_decision(text, context=context_str, sender_name=sender_name, current_date=current_date_str)
             
         logger.info(f"Gemini detection analysis: is_decision={analysis.is_decision}, summary='{analysis.summary}', rationale='{analysis.rationale}', maker='{analysis.decision_maker}'")
         
@@ -58,6 +85,19 @@ async def process_message_async(event, say, client):
             else:
                 # Custom name extracted by Gemini
                 user_mention = decision_maker
+
+            # Enrich with related past discussions across the workspace via the MCP search server.
+            # This is the "context enrichment" step in the architecture: a decision draft should
+            # surface prior conversations on the same topic, not just the triggering message.
+            related_discussions = None
+            try:
+                related_discussions = await search_related_discussions(summary, count=3)
+                if related_discussions and related_discussions != "No related past discussions found.":
+                    logger.info("Found related past discussions via MCP search.")
+                else:
+                    related_discussions = None
+            except Exception as mcp_err:
+                logger.warning(f"MCP related-discussion search failed: {mcp_err}")
 
             # Serialize decision data to include in the button action value (stateless)
             action_value = json.dumps({
@@ -88,7 +128,18 @@ async def process_message_async(event, say, client):
                                f"*Who:* {user_mention}"
                      }
                 },
-                {
+            ]
+
+            if related_discussions:
+                blocks.append({
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": f"*🔎 Related past discussions:*\n{related_discussions}"
+                    }
+                })
+
+            blocks.append({
                     "type": "actions",
                     "block_id": f"decision_actions_{ts}",
                     "elements": [
@@ -115,9 +166,8 @@ async def process_message_async(event, say, client):
                             "value": "dismissed"
                         }
                     ]
-                }
-            ]
-            
+                })
+
             # Post the card in the thread of the message
             logger.info(f"Posting decision draft card to channel {channel}, thread {thread_ts}...")
             await say(
