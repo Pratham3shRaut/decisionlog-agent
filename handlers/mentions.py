@@ -4,7 +4,7 @@ import asyncio
 import logging
 from slack_bolt.async_app import AsyncApp
 from db import SessionLocal, LoggedDecision
-from gemini import answer_query, embed_text, cosine_similarity
+from llm import answer_query, embed_text, cosine_similarity
 
 logger = logging.getLogger("decisionlog.mentions")
 

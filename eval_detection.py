@@ -11,7 +11,7 @@ This does not require a live Slack connection, only GEMINI_API_KEY in .env.
 """
 import sys
 import time
-from gemini import detect_decision
+from llm import detect_decision
 
 # Free-tier Gemini quota is 5 requests/minute; space calls out to avoid burning the whole
 # budget on retries (each retry-after-429 already costs ~15-50s).
