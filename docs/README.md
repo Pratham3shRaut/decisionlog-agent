@@ -8,6 +8,7 @@ One doc per completed engineering task, newest work building on older.
 | [01](01-mcp-integration.md) | MCP server integration (related-discussion enrichment) | ✅ tested |
 | [02](02-real-time-search-api.md) | Real-Time Search API (`assistant.search.context`) | ✅ tested |
 | [03](03-semantic-search.md) | Embeddings-based semantic search for Q&A | ✅ 4/4 eval |
+| [04](04-llm-provider-abstraction.md) | Multi-provider LLM abstraction (Gemini + OpenAI) | ✅ code done, OpenAI live test pending key |
 
 ## Eligible-technology coverage (challenge requirement)
 

@@ -2,7 +2,7 @@ import json
 import logging
 import asyncio
 from slack_bolt.async_app import AsyncApp
-from gemini import detect_decision
+from llm import detect_decision
 from mcp_client import search_related_discussions
 
 logger = logging.getLogger("decisionlog.messages")

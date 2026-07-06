@@ -4,6 +4,7 @@ slack-bolt
 slack-sdk
 aiohttp
 google-genai
+openai>=1.0
 sqlalchemy
 psycopg2-binary
 python-dotenv
