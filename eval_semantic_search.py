@@ -8,7 +8,7 @@ Run: python eval_semantic_search.py   (needs GEMINI_API_KEY; uses ~6 embedding c
 """
 import sys
 import time
-from gemini import embed_text, cosine_similarity
+from llm import embed_text, cosine_similarity
 
 # A small corpus of "logged decisions".
 DECISIONS = [

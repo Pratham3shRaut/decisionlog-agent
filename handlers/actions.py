@@ -2,7 +2,7 @@ import json
 import logging
 from slack_bolt.async_app import AsyncApp
 from db import SessionLocal, LoggedDecision
-from gemini import embed_text
+from llm import embed_text
 
 logger = logging.getLogger("decisionlog.actions")
 
