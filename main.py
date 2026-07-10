@@ -81,7 +81,7 @@ async def lifespan(app: FastAPI):
     # Graceful shutdown
     if socket_handler:
         print("Stopping Slack Bolt Socket Mode client...")
-        await socket_handler.close()
+        await socket_handler.close_async()
         print("Slack Bolt Socket Mode client stopped.")
 
 # Initialize FastAPI App with Lifespan handler
@@ -92,7 +92,7 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 def health_check():
     """Health check endpoint to verify backend service status."""
     return {
